@@ -47,10 +47,10 @@ function calculateUXScore(metrics: any) {
     score += metrics.mobileResponsive * 0.25;
 
     // 3. Accessibility & Semantics (20%)
-    score += metrics.accessibility * 0.20;
+    score += metrics.accessibilityScore * 0.20;
 
     // 4. Usability & Layout (20%)
-    score += metrics.easeOfUse * 0.20;
+    score += metrics.easeOfUseScore * 0.20;
 
     // 5. Visual Stability & Richness (10%)
     score += metrics.visualRichness * 0.10;
@@ -257,8 +257,8 @@ export async function GET(request: NextRequest) {
             performance: data.htmlKB > 800 ? 50 : 100, // Placeholder for score calc
             loadTimeMs: loadTime,
             mobileResponsive: data.mobile.score,
-            accessibility: data.accessibility.score,
-            easeOfUse: data.easeOfUse.score,
+            accessibilityScore: data.accessibility.score,
+            easeOfUseScore: data.easeOfUse.score,
             visualRichness: data.visual.score
         };
 
