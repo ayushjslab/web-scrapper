@@ -33,28 +33,29 @@ async function getChromiumPath(): Promise<string> {
 }
 
 function calculateUXScore(metrics: any) {
-    let score = 100;
+    let score = 0;
 
-    // Performance (mostly based on load time and resource counts)
-    if (metrics.performance < 70) score -= 15;
-    if (metrics.performance < 50) score -= 10;
+    // 1. Performance (25%)
+    let perfScore = 100;
+    if (metrics.loadTimeMs > 3000) perfScore -= 40;
+    else if (metrics.loadTimeMs > 1500) perfScore -= 20;
+    if (metrics.htmlKB > 800) perfScore -= 15;
+    if (metrics.scripts > 50) perfScore -= 10;
+    score += Math.max(0, perfScore) * 0.25;
 
-    // Mobile responsiveness
-    if (metrics.mobileResponsive < 80) score -= 10;
-    if (metrics.mobileResponsive < 50) score -= 15;
+    // 2. Mobile & Responsive (25%)
+    score += metrics.mobileResponsive * 0.25;
 
-    // Accessibility
-    if (metrics.accessibility < 80) score -= 10;
-    if (metrics.accessibility < 50) score -= 10;
+    // 3. Accessibility & Semantics (20%)
+    score += metrics.accessibility * 0.20;
 
-    // Ease of Use / Layout
-    if (metrics.easeOfUse < 80) score -= 10;
+    // 4. Usability & Layout (20%)
+    score += metrics.easeOfUse * 0.20;
 
-    // Payload penalties
-    if (metrics.htmlKB > 500) score -= 10;
-    if (metrics.domNodes > 3000) score -= 10;
+    // 5. Visual Stability & Richness (10%)
+    score += metrics.visualRichness * 0.10;
 
-    return Math.max(0, score);
+    return Math.round(score);
 }
 
 /**
@@ -130,44 +131,112 @@ export async function GET(request: NextRequest) {
             const getDOMNodes = () => document.querySelectorAll('*').length;
             const getScripts = () => document.querySelectorAll('script').length;
             const getStyles = () => document.querySelectorAll('link[rel="stylesheet"], style').length;
+
             const getImages = () => {
                 const imgs = Array.from(document.querySelectorAll('img'));
                 return {
                     total: imgs.length,
                     lazy: imgs.filter(i => i.getAttribute('loading') === 'lazy').length,
-                    withAlt: imgs.filter(i => i.hasAttribute('alt') && i.getAttribute('alt') !== '').length
+                    withAlt: imgs.filter(i => i.hasAttribute('alt') && i.getAttribute('alt') !== '').length,
+                    withDimensions: imgs.filter(i => i.hasAttribute('width') && i.hasAttribute('height')).length
                 };
             };
 
             const checkMobile = () => {
                 let score = 0;
-                if (document.querySelector('meta[name="viewport"]')) score += 40;
-                if (Array.from(document.styleSheets).some(s => {
-                    try { return Array.from(s.cssRules).some(r => (r as CSSMediaRule).media !== undefined); } catch (e) { return false; }
-                })) score += 40;
-                // Heuristic for responsive frameworks
-                if (document.querySelector('.container, .row, .flex, .grid, [class*="mx-"], [class*="p-"]')) score += 20;
-                return Math.min(100, score);
+                const hasViewport = !!document.querySelector('meta[name="viewport"]');
+                if (hasViewport) score += 40;
+
+                const hasMediaQueries = Array.from(document.styleSheets).some(s => {
+                    try { return Array.from(s.cssRules).some(r => r.constructor.name === 'CSSMediaRule'); } catch (e) { return false; }
+                });
+                if (hasMediaQueries) score += 30;
+
+                const hasResponsiveClass = !!document.querySelector('.container, .row, .flex, .grid, [class*="mx-"], [class*="p-"], [class*="md:"], [class*="lg:"]');
+                if (hasResponsiveClass) score += 20;
+
+                const touchTargets = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"]'));
+                const smallTargets = touchTargets.filter(t => {
+                    const rect = t.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0 && (rect.width < 44 || rect.height < 44);
+                }).length;
+                if (touchTargets.length > 0 && (smallTargets / touchTargets.length) < 0.2) score += 10;
+
+                return {
+                    score: Math.min(100, score),
+                    details: { hasViewport, hasMediaQueries, hasResponsiveClass, smallTouchTargets: smallTargets }
+                };
             };
 
             const checkAccessibility = () => {
                 let score = 0;
-                if (document.documentElement.lang) score += 20;
-                if (document.title) score += 20;
+                const hasLang = !!document.documentElement.lang;
+                if (hasLang) score += 20;
+
+                const hasTitle = !!document.title;
+                if (hasTitle) score += 20;
+
                 const imgs = getImages();
-                if (imgs.total === 0 || imgs.withAlt / imgs.total > 0.8) score += 20;
-                if (document.querySelector('header, footer, main, nav')) score += 20;
-                if (document.querySelector('[aria-label], [role]')) score += 20;
-                return score;
+                const altRatio = imgs.total === 0 ? 1 : imgs.withAlt / imgs.total;
+                if (altRatio > 0.8) score += 20;
+
+                const semanticTags = document.querySelectorAll('header, footer, main, nav, section, article, aside').length;
+                if (semanticTags >= 4) score += 20;
+
+                const ariaElements = document.querySelectorAll('[aria-label], [role], [aria-hidden], [aria-expanded]').length;
+                if (ariaElements > 0) score += 20;
+
+                return {
+                    score: Math.min(100, score),
+                    details: { hasLang, hasTitle, altRatio, semanticTags, ariaElements }
+                };
             };
 
             const checkEaseOfUse = () => {
                 let score = 0;
-                if (document.querySelector('nav')) score += 30;
-                if (document.querySelector('h1')) score += 20;
-                if (document.querySelector('input[type="search"], .search')) score += 20;
-                if (document.querySelectorAll('a').length > 5) score += 30;
-                return score;
+                const hasNav = !!document.querySelector('nav, [role="navigation"], .nav, .menu');
+                if (hasNav) score += 25;
+
+                const hasH1 = !!document.querySelector('h1');
+                if (hasH1) score += 20;
+
+                const hasSearch = !!document.querySelector('input[type="search"], .search, #search');
+                if (hasSearch) score += 15;
+
+                const linkCount = document.querySelectorAll('a').length;
+                if (linkCount > 5) score += 20;
+
+                const listCount = document.querySelectorAll('ul, ol').length;
+                if (listCount > 0) score += 20;
+
+                return {
+                    score: Math.min(100, score),
+                    details: { hasNav, hasH1, hasSearch, linkCount, listCount }
+                };
+            };
+
+            const checkVisualRichness = () => {
+                let score = 0;
+                const hasAnimations = Array.from(document.styleSheets).some(s => {
+                    try { return Array.from(s.cssRules).some(r => r.constructor.name === 'CSSKeyframesRule'); } catch (e) { return false; }
+                });
+                if (hasAnimations) score += 30;
+
+                const videoCount = document.querySelectorAll('video, iframe[src*="youtube"], iframe[src*="vimeo"]').length;
+                if (videoCount > 0) score += 25;
+
+                const customFonts = Array.from(document.styleSheets).some(s => {
+                    try { return Array.from(s.cssRules).some(r => r.constructor.name === 'CSSFontFaceRule'); } catch (e) { return false; }
+                });
+                if (customFonts) score += 25;
+
+                const svgCount = document.querySelectorAll('svg').length;
+                if (svgCount > 5) score += 20;
+
+                return {
+                    score: Math.min(100, score),
+                    details: { hasAnimations, videoCount, customFonts, svgCount }
+                };
             };
 
             return {
@@ -176,24 +245,21 @@ export async function GET(request: NextRequest) {
                 scripts: getScripts(),
                 styles: getStyles(),
                 images: getImages(),
-                mobileResponsive: checkMobile(),
+                mobile: checkMobile(),
                 accessibility: checkAccessibility(),
-                easeOfUse: checkEaseOfUse()
+                easeOfUse: checkEaseOfUse(),
+                visual: checkVisualRichness()
             };
         });
 
-        // Performance score calculation based on load time and complexity
-        let performanceScore = 100;
-        if (loadTime > 3000) performanceScore -= 30;
-        else if (loadTime > 1500) performanceScore -= 15;
-        if (data.htmlKB > 500) performanceScore -= 10;
-        if (data.scripts > 30) performanceScore -= 10;
-        performanceScore = Math.max(0, performanceScore);
-
         const metrics = {
             ...data,
-            performance: performanceScore,
-            loadTimeMs: loadTime
+            performance: data.htmlKB > 800 ? 50 : 100, // Placeholder for score calc
+            loadTimeMs: loadTime,
+            mobileResponsive: data.mobile.score,
+            accessibility: data.accessibility.score,
+            easeOfUse: data.easeOfUse.score,
+            visualRichness: data.visual.score
         };
 
         const uxScore = calculateUXScore(metrics);
@@ -202,25 +268,32 @@ export async function GET(request: NextRequest) {
             overall: uxScore,
             categories: {
                 performance: {
-                    score: performanceScore,
+                    score: metrics.performance, // Will be adjusted by loadTime in overall
                     details: {
                         loadTime: `${loadTime}ms`,
                         pageSize: `${data.htmlKB.toFixed(2)}KB`,
-                        resources: `${data.scripts} scripts, ${data.styles} styles`
+                        resources: {
+                            scripts: data.scripts,
+                            styles: data.styles,
+                            domNodes: data.domNodes
+                        }
                     }
                 },
                 accessibility: {
-                    score: data.accessibility,
-                    details: {
-                        imagesWithAlt: `${data.images.withAlt}/${data.images.total}`,
-                        hasLang: !!(await page.evaluate(() => document.documentElement.lang))
-                    }
+                    score: data.accessibility.score,
+                    details: data.accessibility.details
                 },
                 mobile: {
-                    score: data.mobileResponsive
+                    score: data.mobile.score,
+                    details: data.mobile.details
                 },
                 usability: {
-                    score: data.easeOfUse
+                    score: data.easeOfUse.score,
+                    details: data.easeOfUse.details
+                },
+                visual: {
+                    score: data.visual.score,
+                    details: data.visual.details
                 }
             }
         };

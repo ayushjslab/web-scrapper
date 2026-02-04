@@ -120,7 +120,6 @@ export async function GET(request: NextRequest) {
 
         // Perform analysis in the browser context
         const metrics = await page.evaluate(() => {
-            // Helper to count words
             const getText = () => {
                 const body = document.body;
                 if (!body) return "";
@@ -130,64 +129,112 @@ export async function GET(request: NextRequest) {
             const textContent = getText();
             const wordCount = textContent.split(/\s+/).filter(w => w.length > 2).length;
 
+            // Media & Interactive Elements
+            const images = document.querySelectorAll('img').length;
+            const videos = document.querySelectorAll('video, iframe[src*="youtube"], iframe[src*="vimeo"]').length;
+            const audio = document.querySelectorAll('audio').length;
+            const buttons = document.querySelectorAll('button, input[type="button"], input[type="submit"], .btn, .button').length;
+            const forms = document.querySelectorAll('form').length;
+            const inputs = document.querySelectorAll('input:not([type="hidden"]), select, textarea').length;
+
+            // Structural Elements
+            const headers = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+            const lists = document.querySelectorAll('ul, ol').length;
+            const listItems = document.querySelectorAll('li').length;
+            const tables = document.querySelectorAll('table').length;
+            const quotes = document.querySelectorAll('blockquote, q').length;
+            const codeBlocks = document.querySelectorAll('pre, code').length;
+
+            // Links
+            const allLinks = Array.from(document.querySelectorAll('a[href]'));
+            const internalLinks = allLinks.filter(a => (a as HTMLAnchorElement).href.includes(window.location.hostname)).length;
+            const externalLinks = allLinks.length - internalLinks;
+
+            // Metadata
+            const hasOG = !!document.querySelector('meta[property^="og:"]');
+            const hasTwitter = !!document.querySelector('meta[name^="twitter:"]');
+            const hasJSONLD = !!document.querySelector('script[type="application/ld+json"]');
+
             // Engagement analysis
             const getEngagement = () => {
                 let timeOnSite = 5;
-                if (wordCount > 1000) timeOnSite += 20;
+                const readingTimeMinutes = Math.ceil(wordCount / 200);
+                if (wordCount > 1000) timeOnSite += 25;
                 else if (wordCount > 500) timeOnSite += 15;
 
-                const videos = document.querySelectorAll('video, iframe[src*="youtube"], iframe[src*="vimeo"]').length;
-                timeOnSite += Math.min(videos * 10, 30);
+                timeOnSite += Math.min(videos * 15, 45);
+                timeOnSite += Math.min(images * 2, 20);
 
                 if (document.querySelector('nav')) timeOnSite += 10;
 
                 let bounceRate = 100;
                 if (document.querySelector('nav')) bounceRate -= 15;
-                if (document.querySelector('input[type="search"]')) bounceRate -= 10;
+                if (inputs > 0) bounceRate -= 15;
+                if (buttons > 0) bounceRate -= 10;
                 if (document.querySelector('meta[name="viewport"]')) bounceRate -= 10;
 
                 let returnVisitor = 0;
                 if (document.querySelector('[href*="login"], [href*="signin"], .account, .profile')) returnVisitor += 30;
-                if (document.querySelector('.newsletter, [href*="subscribe"], form[id*="subscribe"]')) returnVisitor += 20;
-                if (document.querySelector('a[href*="blog"]')) returnVisitor += 10;
+                if (document.querySelector('.newsletter, [href*="subscribe"], form[id*="subscribe"]')) returnVisitor += 25;
+                if (document.querySelector('a[href*="blog"], a[href*="article"]')) returnVisitor += 15;
 
                 return {
                     timeOnSiteScore: Math.min(100, timeOnSite),
-                    bounceRateScore: Math.min(100, Math.max(0, 100 - (bounceRate - 50))), // Heuristic
+                    bounceRateScore: Math.min(100, Math.max(0, 100 - (bounceRate - 50))),
                     returnVisitorScore: Math.min(100, returnVisitor),
-                    details: { wordCount, videoCount: videos }
+                    details: {
+                        wordCount,
+                        readingTimeMinutes,
+                        media: { images, videos, audio },
+                        interactions: { buttons, forms, inputs }
+                    }
                 };
             };
 
             // Quality analysis
             const getQuality = () => {
                 let comprehensiveness = 0;
-                if (wordCount > 1000) comprehensiveness += 20;
-                const hCount = document.querySelectorAll('h1, h2, h3').length;
-                comprehensiveness += Math.min(hCount * 5, 20);
-                if (document.querySelector('table')) comprehensiveness += 10;
-                if (document.querySelectorAll('img').length > 5) comprehensiveness += 10;
+                if (wordCount > 1500) comprehensiveness += 30;
+                else if (wordCount > 800) comprehensiveness += 20;
+
+                const hLevels = headers.map(h => parseInt(h.tagName[1]));
+                const hCount = headers.length;
+                comprehensiveness += Math.min(hCount * 4, 25);
+
+                if (tables > 0) comprehensiveness += 10;
+                if (lists > 0) comprehensiveness += 10;
+                if (codeBlocks > 0) comprehensiveness += 10;
+                if (quotes > 0) comprehensiveness += 5;
 
                 let accuracy = 0;
-                if (document.querySelector('.author, [rel="author"]')) accuracy += 20;
-                const outLinks = Array.from(document.querySelectorAll('a[href^="http"]'))
-                    .filter(a => !(a as HTMLAnchorElement).href.includes(window.location.hostname));
-                if (outLinks.length > 3) accuracy += 20;
-                if (document.querySelector('script[type="application/ld+json"]')) accuracy += 20;
-                if (window.location.protocol === 'https:') accuracy += 20;
-                if (document.querySelector('[href*="privacy"], [href*="terms"]')) accuracy += 20;
+                if (document.querySelector('.author, [rel="author"], .byline')) accuracy += 20;
+                if (externalLinks > 5) accuracy += 20;
+                if (hasJSONLD) accuracy += 25;
+                if (window.location.protocol === 'https:') accuracy += 15;
+                if (document.querySelector('[href*="privacy"], [href*="terms"], [href*="legal"]')) accuracy += 20;
 
                 let freshness = 0;
-                const dateStrings: string[] = document.body.innerText.match(/\d{4}|(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}/gi) || [];
                 const currentYear = new Date().getFullYear().toString();
-                if (dateStrings.includes(currentYear)) freshness += 40;
-                if (document.querySelector('.post-date, .updated, time')) freshness += 30;
+                if (textContent.includes(currentYear)) freshness += 40;
+                if (document.querySelector('.post-date, .updated, time, [datetime]')) freshness += 40;
+                if (document.querySelector('meta[property="article:published_time"]')) freshness += 20;
 
                 return {
                     comprehensivenessScore: Math.min(100, comprehensiveness),
                     accuracyScore: Math.min(100, accuracy),
                     freshnessScore: Math.min(100, freshness),
-                    details: { headingCount: hCount, outLinks: outLinks.length }
+                    details: {
+                        headingStats: {
+                            total: hCount,
+                            levels: hLevels.reduce((acc: any, curr) => {
+                                acc[`h${curr}`] = (acc[`h${curr}`] || 0) + 1;
+                                return acc;
+                            }, {})
+                        },
+                        structure: { lists, listItems, tables, quotes, codeBlocks },
+                        links: { internal: internalLinks, external: externalLinks },
+                        metadata: { hasOG, hasTwitter, hasJSONLD }
+                    }
                 };
             };
 
@@ -207,11 +254,15 @@ export async function GET(request: NextRequest) {
                     score: metrics.engagement.timeOnSiteScore,
                     indicators: {
                         wordCount: metrics.engagement.details.wordCount,
-                        videoCount: metrics.engagement.details.videoCount,
+                        readingTimeMinutes: metrics.engagement.details.readingTimeMinutes,
+                        mediaMetrics: metrics.engagement.details.media
                     }
                 },
                 bounceRate: {
-                    score: metrics.engagement.bounceRateScore
+                    score: metrics.engagement.bounceRateScore,
+                    indicators: {
+                        interactionElements: metrics.engagement.details.interactions
+                    }
                 },
                 returnVisitor: {
                     score: metrics.engagement.returnVisitorScore
@@ -222,11 +273,16 @@ export async function GET(request: NextRequest) {
                     score: metrics.quality.comprehensivenessScore,
                     indicators: {
                         wordCount: metrics.engagement.details.wordCount,
-                        headingCount: metrics.quality.details.headingCount
+                        headingHierarchy: metrics.quality.details.headingStats,
+                        structuralElements: metrics.quality.details.structure
                     }
                 },
                 accuracy: {
-                    score: metrics.quality.accuracyScore
+                    score: metrics.quality.accuracyScore,
+                    indicators: {
+                        linkAnalysis: metrics.quality.details.links,
+                        metadataPresence: metrics.quality.details.metadata
+                    }
                 },
                 freshness: {
                     score: metrics.quality.freshnessScore
