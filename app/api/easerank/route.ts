@@ -150,52 +150,6 @@ export async function GET(request: NextRequest) {
                 getMeta('meta[name="twitter:description"]') ||
                 "";
 
-            // ── Category ─────────────────────────────────────────────────────────
-            const categorySelectors = [
-                '[class*="category"]',
-                '[class*="cat-"]',
-                ".breadcrumb li:last-of-type",
-                ".breadcrumbs li:last-of-type",
-                'a[rel="category tag"]',
-                '[itemprop="articleSection"]',
-                getMeta('meta[property="article:section"]')
-                    ? 'meta[property="article:section"]'
-                    : null,
-            ].filter(Boolean) as string[];
-
-            let category = "";
-            for (const sel of categorySelectors) {
-                const el = document.querySelector(sel) as HTMLElement | null;
-                if (el) {
-                    const text =
-                        sel.startsWith("meta")
-                            ? (el as HTMLMetaElement).content
-                            : el.innerText;
-                    if (text?.trim()) {
-                        category = cleanText(text);
-                        break;
-                    }
-                }
-            }
-            // fallback: og article:section
-            if (!category) {
-                category = getMeta('meta[property="article:section"]');
-            }
-
-            // ── Tags ─────────────────────────────────────────────────────────────
-            const tagEls = Array.from(
-                document.querySelectorAll(
-                    '[rel="tag"], [class*="tag"] a, [class*="tags"] a, [class*="label"] a'
-                )
-            );
-            const tags = [
-                ...new Set(
-                    tagEls
-                        .map((el) => cleanText((el as HTMLElement).innerText))
-                        .filter((t) => t.length > 0 && t.length < 60)
-                ),
-            ];
-
             // ── All Headings ──────────────────────────────────────────────────────
             const allHeadingEls = Array.from(
                 contentEl.querySelectorAll("h1, h2, h3, h4, h5, h6")
@@ -248,18 +202,77 @@ export async function GET(request: NextRequest) {
 
             // 2. Native <details>/<summary> pattern
             if (faqItems.length === 0) {
-                const detailsEls = Array.from(document.querySelectorAll("details"));
-                for (const det of detailsEls) {
-                    const q = det.querySelector("summary");
-                    const answerEls = Array.from(det.children).filter(
-                        (c) => c.tagName !== "SUMMARY"
+                const detailsEls = Array.from(
+                    document.querySelectorAll("details")
+                );
+
+                const isValidQuestion = (text: string) => {
+                    const lower = text.toLowerCase();
+
+                    return (
+                        text.endsWith("?") ||
+                        lower.startsWith("what") ||
+                        lower.startsWith("how") ||
+                        lower.startsWith("why") ||
+                        lower.startsWith("when") ||
+                        lower.startsWith("where") ||
+                        lower.startsWith("can") ||
+                        lower.startsWith("do") ||
+                        lower.startsWith("does") ||
+                        lower.startsWith("is") ||
+                        lower.startsWith("are") ||
+                        lower.startsWith("will")
                     );
-                    if (q && answerEls.length > 0) {
+                };
+
+                for (const det of detailsEls) {
+                    const summary =
+                        det.querySelector("summary");
+
+                    if (!summary) continue;
+
+                    const question = cleanText(
+                        (summary as HTMLElement).innerText || ""
+                    );
+
+                    if (
+                        !question ||
+                        question.length < 5 ||
+                        question.length > 250 ||
+                        !isValidQuestion(question)
+                    ) {
+                        continue;
+                    }
+
+                    // Remove summary from cloned node
+                    const cloned =
+                        det.cloneNode(true) as HTMLElement;
+
+                    const clonedSummary =
+                        cloned.querySelector("summary");
+
+                    if (clonedSummary) {
+                        clonedSummary.remove();
+                    }
+
+                    const answer = cleanText(
+                        cloned.innerText || ""
+                    );
+
+                    if (
+                        answer &&
+                        answer !== question &&
+                        answer.length > 20 &&
+                        answer.length < 3000 &&
+                        !faqItems.some(
+                            (f) =>
+                                f.question.toLowerCase() ===
+                                question.toLowerCase()
+                        )
+                    ) {
                         faqItems.push({
-                            question: cleanText((q as HTMLElement).innerText),
-                            answer: cleanText(
-                                answerEls.map((el) => (el as HTMLElement).innerText).join(" ")
-                            ),
+                            question,
+                            answer,
                         });
                     }
                 }
@@ -267,61 +280,185 @@ export async function GET(request: NextRequest) {
 
             // 3. <dt>/<dd> definition list pattern
             if (faqItems.length === 0) {
-                const dts = Array.from(document.querySelectorAll("dt"));
+                const dts = Array.from(
+                    document.querySelectorAll("dt")
+                );
+
+                const isValidQuestion = (text: string) => {
+                    const lower = text.toLowerCase();
+
+                    return (
+                        text.endsWith("?") ||
+                        lower.startsWith("what") ||
+                        lower.startsWith("how") ||
+                        lower.startsWith("why") ||
+                        lower.startsWith("when") ||
+                        lower.startsWith("where") ||
+                        lower.startsWith("can") ||
+                        lower.startsWith("do") ||
+                        lower.startsWith("does") ||
+                        lower.startsWith("is") ||
+                        lower.startsWith("are") ||
+                        lower.startsWith("will")
+                    );
+                };
+
                 for (const dt of dts) {
                     const dd = dt.nextElementSibling;
-                    if (dd && dd.tagName === "DD") {
-                        faqItems.push({
-                            question: cleanText((dt as HTMLElement).innerText),
-                            answer: cleanText((dd as HTMLElement).innerText),
-                        });
+
+                    if (!dd || dd.tagName !== "DD") {
+                        continue;
                     }
+
+                    const question = cleanText(
+                        (dt as HTMLElement).innerText || ""
+                    );
+
+                    const answer = cleanText(
+                        (dd as HTMLElement).innerText || ""
+                    );
+
+                    if (
+                        !question ||
+                        !answer ||
+                        question.length < 5 ||
+                        question.length > 250 ||
+                        answer.length < 20 ||
+                        answer.length > 3000 ||
+                        !isValidQuestion(question)
+                    ) {
+                        continue;
+                    }
+
+                    // Avoid duplicates
+                    if (
+                        faqItems.some(
+                            (f) =>
+                                f.question.toLowerCase() ===
+                                question.toLowerCase()
+                        )
+                    ) {
+                        continue;
+                    }
+
+                    faqItems.push({
+                        question,
+                        answer,
+                    });
                 }
             }
 
             // 4. Broad DOM heuristic — find FAQ/accordion containers and pair siblings
             if (faqItems.length === 0) {
                 const faqContainerSel = [
-                    '[class*="faq"]', '[id*="faq"]',
-                    '[class*="FAQ"]', '[id*="FAQ"]',
-                    '[class*="accordion"]', '[id*="accordion"]',
+                    '[class*="faq"]',
+                    '[id*="faq"]',
+                    '[class*="accordion"]',
+                    '[id*="accordion"]',
                 ].join(",");
-                const faqContainers = Array.from(document.querySelectorAll(faqContainerSel));
-                const searchRoots: Element[] = faqContainers.length > 0 ? faqContainers : [document.body];
+
+                const faqContainers = Array.from(
+                    document.querySelectorAll(faqContainerSel)
+                );
+
+                const searchRoots: Element[] =
+                    faqContainers.length > 0
+                        ? faqContainers
+                        : [document.body];
+
+                const isValidQuestion = (text: string) => {
+                    const lower = text.toLowerCase();
+
+                    return (
+                        text.endsWith("?") ||
+                        lower.startsWith("what") ||
+                        lower.startsWith("how") ||
+                        lower.startsWith("why") ||
+                        lower.startsWith("when") ||
+                        lower.startsWith("where") ||
+                        lower.startsWith("can") ||
+                        lower.startsWith("do") ||
+                        lower.startsWith("does") ||
+                        lower.startsWith("is") ||
+                        lower.startsWith("are")
+                    );
+                };
 
                 for (const root of searchRoots) {
                     const questionEls = Array.from(
                         root.querySelectorAll(
-                            'h2, h3, h4, button, ' +
-                            '[class*="question"], [class*="Question"], ' +
-                            '[class*="toggle"], [class*="trigger"], [class*="header"]'
+                            `
+        h2,
+        h3,
+        h4,
+        button,
+        [class*="question"],
+        [class*="Question"]
+      `
                         )
                     ).filter((el) => {
-                        const t = (el as HTMLElement).innerText?.trim();
-                        return t && t.length > 5 && t.length < 250;
+                        const text = cleanText(
+                            (el as HTMLElement).innerText || ""
+                        );
+
+                        return (
+                            text &&
+                            text.length > 8 &&
+                            text.length < 200 &&
+                            isValidQuestion(text)
+                        );
                     });
 
                     for (const qEl of questionEls) {
-                        const qText = cleanText((qEl as HTMLElement).innerText);
-                        if (faqItems.some((f) => f.question === qText)) continue;
+                        const qText = cleanText(
+                            (qEl as HTMLElement).innerText
+                        );
+
+                        if (
+                            faqItems.some(
+                                (f) => f.question === qText
+                            )
+                        ) {
+                            continue;
+                        }
 
                         let answerText = "";
-                        // Try next sibling first
+
+                        // Next sibling
                         const nextSib = qEl.nextElementSibling;
+
                         if (nextSib) {
-                            answerText = cleanText((nextSib as HTMLElement).innerText || "");
+                            answerText = cleanText(
+                                (nextSib as HTMLElement).innerText || ""
+                            );
                         }
-                        // Then parent's next sibling
+
+                        // Parent next sibling
                         if (!answerText && qEl.parentElement) {
-                            const parentNext = qEl.parentElement.nextElementSibling;
+                            const parentNext =
+                                qEl.parentElement.nextElementSibling;
+
                             if (parentNext) {
-                                answerText = cleanText((parentNext as HTMLElement).innerText || "");
+                                answerText = cleanText(
+                                    (parentNext as HTMLElement).innerText || ""
+                                );
                             }
                         }
-                        if (answerText && answerText !== qText && answerText.length > 10) {
-                            faqItems.push({ question: qText, answer: answerText });
+
+                        // Validation
+                        if (
+                            answerText &&
+                            answerText !== qText &&
+                            answerText.length > 20 &&
+                            answerText.length < 1500
+                        ) {
+                            faqItems.push({
+                                question: qText,
+                                answer: answerText,
+                            });
                         }
                     }
+
                     if (faqItems.length > 0) break;
                 }
             }
@@ -347,16 +484,66 @@ export async function GET(request: NextRequest) {
                 }, []);
 
 
+            // ── Logo URL ────────────────────────────────────────────────────────
+            const logoSelectors = [
+                'meta[property="og:logo"]',
+                'meta[itemprop="logo"]',
+                'link[rel="apple-touch-icon"]',
+                'link[rel="icon"][sizes="192x192"]',
+                'link[rel="icon"]',
+                'link[rel="shortcut icon"]',
+            ];
+
+            let logoUrl = "";
+
+            // Try to find Logo in JSON-LD first (Organization or Website schema)
+            const scriptsForLogo = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
+            for (const script of scriptsForLogo) {
+                try {
+                    const json = JSON.parse(script.textContent || "");
+                    const candidates = Array.isArray(json) ? json : [json, ...(json["@graph"] ?? [])];
+                    for (const node of candidates) {
+                        if (node.logo) {
+                            logoUrl = typeof node.logo === "string" ? node.logo : node.logo.url;
+                            if (logoUrl) break;
+                        }
+                        if (node.publisher && node.publisher.logo && node.publisher.logo.url) {
+                            logoUrl = node.publisher.logo.url;
+                            if (logoUrl) break;
+                        }
+                    }
+                    if (logoUrl) break;
+                } catch { }
+            }
+
+            // Fallback to meta / link tags
+            if (!logoUrl) {
+                for (const selector of logoSelectors) {
+                    const el = document.querySelector(selector);
+                    if (el) {
+                        logoUrl = (el as HTMLMetaElement).content || (el as HTMLLinkElement).href;
+                        if (logoUrl) break;
+                    }
+                }
+            }
+
+            // Finally, attempt to find an img tag that looks like a logo
+            if (!logoUrl) {
+                const imgLogo = document.querySelector('img[src*="logo"], img[alt*="logo" i]') as HTMLImageElement;
+                if (imgLogo) {
+                    logoUrl = imgLogo.src;
+                }
+            }
+
             return {
                 title,
                 metaTitle,
                 metaDescription,
-                category,
-                tags,
                 intro,
                 headings,
                 faq: faqItems,
                 internalLinks,
+                logoUrl,
             };
         }, parsedUrl.hostname);
 
