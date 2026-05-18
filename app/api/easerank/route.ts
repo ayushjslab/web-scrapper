@@ -484,57 +484,6 @@ export async function GET(request: NextRequest) {
                 }, []);
 
 
-            // ── Logo URL ────────────────────────────────────────────────────────
-            const logoSelectors = [
-                'meta[property="og:logo"]',
-                'meta[itemprop="logo"]',
-                'link[rel="apple-touch-icon"]',
-                'link[rel="icon"][sizes="192x192"]',
-                'link[rel="icon"]',
-                'link[rel="shortcut icon"]',
-            ];
-
-            let logoUrl = "";
-
-            // Try to find Logo in JSON-LD first (Organization or Website schema)
-            const scriptsForLogo = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
-            for (const script of scriptsForLogo) {
-                try {
-                    const json = JSON.parse(script.textContent || "");
-                    const candidates = Array.isArray(json) ? json : [json, ...(json["@graph"] ?? [])];
-                    for (const node of candidates) {
-                        if (node.logo) {
-                            logoUrl = typeof node.logo === "string" ? node.logo : node.logo.url;
-                            if (logoUrl) break;
-                        }
-                        if (node.publisher && node.publisher.logo && node.publisher.logo.url) {
-                            logoUrl = node.publisher.logo.url;
-                            if (logoUrl) break;
-                        }
-                    }
-                    if (logoUrl) break;
-                } catch { }
-            }
-
-            // Fallback to meta / link tags
-            if (!logoUrl) {
-                for (const selector of logoSelectors) {
-                    const el = document.querySelector(selector);
-                    if (el) {
-                        logoUrl = (el as HTMLMetaElement).content || (el as HTMLLinkElement).href;
-                        if (logoUrl) break;
-                    }
-                }
-            }
-
-            // Finally, attempt to find an img tag that looks like a logo
-            if (!logoUrl) {
-                const imgLogo = document.querySelector('img[src*="logo"], img[alt*="logo" i]') as HTMLImageElement;
-                if (imgLogo) {
-                    logoUrl = imgLogo.src;
-                }
-            }
-
             return {
                 title,
                 metaTitle,
@@ -543,7 +492,6 @@ export async function GET(request: NextRequest) {
                 headings,
                 faq: faqItems,
                 internalLinks,
-                logoUrl,
             };
         }, parsedUrl.hostname);
 
